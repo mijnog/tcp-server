@@ -1,2 +1,4 @@
 server.exe
 *.o
+sizeof.c
+a.exe

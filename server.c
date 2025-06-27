@@ -3,7 +3,28 @@
 #include <ws2tcpip.h>
 
 #define DEFAULT_PORT 8080
-   
+
+
+
+char *trimwhitespace(char *str)
+{
+    char *end;
+    //Trim leading space
+    while(isspace((unsigned char)*str)) 
+        str++;
+    if(*str == 0)  // All spaces?
+            return str;
+    
+    //Trim trailing space
+    end = str + strlen(str) - 1;
+    while(end > str && isspace((unsigned char)*end)) end--;
+    // Write new null terminator character
+    end[1] = '\0';
+        
+    return str;
+}
+
+
 int main(){
     WSADATA wsaData;
 
@@ -64,4 +85,73 @@ int main(){
         WSACleanup();
         return 1;
     }
+    
+    
+    //send welcome banner
+    char * welcome_message = "You are in a cave, everything here echoes...";
+    int iSendResult = send(client_socket, welcome_message, strlen(welcome_message), 0);
+    if (iSendResult == SOCKET_ERROR) {
+        printf("Failed to send welcome banner (error: %d)\n", WSAGetLastError());
+        closesocket(client_socket);
+        WSACleanup();
+        return 1;
+    }
+    
+    //enter listening loop
+    
+    do {
+
+        //receive data from the client
+        char recvbuf[512];
+        memset(recvbuf, 0, sizeof(recvbuf);
+        iResult = recv(client_socket, recvbuf, sizeof(recvbuf), 0);
+        
+        if (strncmp(recvbuf, "quit", iResult) == 0){
+            printf("Client requested connection closed.");
+            closesocket(server_socket);
+            printf("Server socket closed");
+            closesocket(client_socket);
+            printf("Client socket closed");
+            WSACleanup();
+            return 0;
+        }
+        else if (iResult == SOCKET_ERROR) {
+            printf("Fatal error: recv() failed with SOCKET_ERROR: %d\n", WSAGetLastError());
+            closesocket(client_socket);
+            printf("Client socket closed");
+            closesocket(server_socket);
+            printf("Server socket closed");
+            WSACleanup();
+            return 1;
+        } else if (iResult == 0){ 
+            printf("Client closed connection. Closing sockets..");
+            closesocket(client_socket);
+            printf("Client socket closed");
+            closesocket(server_socket);
+            printf("Server socket closed");
+            return 0;
+        } else if (iResult > 0) {
+
+            //recv() returns the number of bytes recieved if successful, (stored in iResult)
+            printf("Recieved: %.*s\n", iResult, recvbuf);
+        
+            //echo back to the client his string
+            iSendResult = send(client_socket, recvbuf, iResult, 0);
+            if(iSendResult == SOCKET_ERROR){
+                printf("Failed to send data to client. Error: %d", WSAGetLastError());
+                closesocket(client_socket);
+                WSACleanup();
+                return 1;
+            }
+        }
+        else {
+            printf("Debug: recv returns: %d. INVESTIGATE THIS", iResult);
+            closesocket(client_socket);
+            WSACleanup();
+            return 1;
+        }
+    } 
+    while (iResult > 0);
+
 }
+
