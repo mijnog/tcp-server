@@ -1,12 +1,28 @@
 #include <winsock2.h>
 #include <stdio.h>
 #include <ws2tcpip.h>
+#include <ctype.h> //tolower()
 
 #define DEFAULT_PORT 8080
+#define INPUT_BUFSIZE 512
 
 
 
-char *trimwhitespace(char *str)
+//apply tolower() to an entire string
+char * strtolower (const char * src, char * dest) {
+    char * original_dest = dest; //saving the pointer since we're incrementing it
+    while (*src != '\0') {
+        *dest = tolower( *src );
+        src++;
+        dest++;
+    }
+    *dest = '\0';
+
+    return original_dest;
+}
+
+//taken from stackoverflow
+char * trim_white_space(char *str)
 {
     char *end;
     //Trim leading space
@@ -29,15 +45,19 @@ int main(){
     WSADATA wsaData;
 
     int iResult;
-   
+    const char * cmdQuit = "quit";
+    const char * cmdExit = "exit";
+    const char * cmdHelp = "help";
+    const char * help_options = "type \'exit\' or \'quit\' to quit\n";
     //initialize winsock
     printf("Initializing winsock...\n");
     iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     /*request Winsock version 2.2, store status code in iResult*/
     
     if (iResult != 0){
-        printf("WSAStartup failed with error: %d\n", iResult);
-        return 1;
+        fprintf(stderr, "WSAStartup failed with error: %d\n", iResult);
+        WSACleanup();
+        return EXIT_FAILURE;
     }
     printf("Winsock initialized successfully!\n");
     
@@ -45,9 +65,8 @@ int main(){
     printf("Creating socket...\n");
     SOCKET server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server_socket == INVALID_SOCKET){
-        printf("Fatal error: socket() failed with error: %d\n", WSAGetLastError());
-        WSACleanup();
-        return 1;
+        fprintf(stderr, "Fatal error: socket() failed with error: %d\n", WSAGetLastError());
+        goto cleanup;
     }
     printf("Socket created successfully!\n");
 
@@ -59,9 +78,8 @@ int main(){
     printf("Binding socket...\n");
     iResult = bind(server_socket, (struct sockaddr*) &server_address, sizeof(server_address));
     if (iResult == SOCKET_ERROR){
-        printf("Fatal error: bind() failed with error: %d\n", WSAGetLastError());
-        WSACleanup();
-        return 1;
+        fprintf(stderr, "Fatal error: bind() failed with error: %d\n", WSAGetLastError());
+        goto cleanup;
     }
     printf("Bind successful!\n");
     
@@ -70,9 +88,7 @@ int main(){
     iResult = listen(server_socket, SOMAXCONN);
     if (iResult == SOCKET_ERROR){
         printf("listen function failed with error: %d\n", WSAGetLastError());
-        closesocket(server_socket);
-        WSACleanup();
-        return 1;
+        goto cleanup;
     }
     printf("Listening on port %d...\n", DEFAULT_PORT);
 
@@ -81,20 +97,17 @@ int main(){
     int client_address_len = sizeof(client_address);
     SOCKET client_socket = accept(server_socket, (struct sockaddr *) &client_address, &client_address_len);
     if (client_socket == INVALID_SOCKET){
-        printf("Error creating client socket: %d\n", WSAGetLastError());
-        WSACleanup();
-        return 1;
+        fprintf(stderr, "Error creating client socket: %d\n", WSAGetLastError());
+        goto cleanup;
     }
     
     
-    //send welcome banner
-    char * welcome_message = "You are in a cave, everything here echoes...";
+    //display welcome banner
+    char * welcome_message = "You are in a cave, everything here echoes...\n";
     int iSendResult = send(client_socket, welcome_message, strlen(welcome_message), 0);
     if (iSendResult == SOCKET_ERROR) {
-        printf("Failed to send welcome banner (error: %d)\n", WSAGetLastError());
-        closesocket(client_socket);
-        WSACleanup();
-        return 1;
+        fprintf(stderr, "Failed to send welcome banner (error: %d)\n", WSAGetLastError());
+        goto cleanup;
     }
     
     //enter listening loop
@@ -102,56 +115,75 @@ int main(){
     do {
 
         //receive data from the client
-        char recvbuf[512];
-        memset(recvbuf, 0, sizeof(recvbuf);
+        char recvbuf[INPUT_BUFSIZE];
+        memset(recvbuf, 0, sizeof(recvbuf)); //clear buffer
         iResult = recv(client_socket, recvbuf, sizeof(recvbuf), 0);
         
-        if (strncmp(recvbuf, "quit", iResult) == 0){
-            printf("Client requested connection closed.");
-            closesocket(server_socket);
-            printf("Server socket closed");
-            closesocket(client_socket);
-            printf("Client socket closed");
-            WSACleanup();
-            return 0;
-        }
-        else if (iResult == SOCKET_ERROR) {
-            printf("Fatal error: recv() failed with SOCKET_ERROR: %d\n", WSAGetLastError());
-            closesocket(client_socket);
-            printf("Client socket closed");
-            closesocket(server_socket);
-            printf("Server socket closed");
-            WSACleanup();
-            return 1;
+        trim_white_space(recvbuf);
+        char lowered_buf[INPUT_BUFSIZE];
+        strtolower(recvbuf, lowered_buf); 
+
+        int len = strlen(recvbuf);
+                       
+        //check for socket error
+        if (iResult == SOCKET_ERROR) {
+            fprintf(stderr, "Fatal error: recv() failed with SOCKET_ERROR: %d\n", WSAGetLastError());
+            goto cleanup;
         } else if (iResult == 0){ 
             printf("Client closed connection. Closing sockets..");
-            closesocket(client_socket);
-            printf("Client socket closed");
-            closesocket(server_socket);
-            printf("Server socket closed");
-            return 0;
-        } else if (iResult > 0) {
+            goto exit_success;
+        
+        //if data was recieved...
+        } if (iResult > 0) {
 
             //recv() returns the number of bytes recieved if successful, (stored in iResult)
-            printf("Recieved: %.*s\n", iResult, recvbuf);
-        
-            //echo back to the client his string
-            iSendResult = send(client_socket, recvbuf, iResult, 0);
-            if(iSendResult == SOCKET_ERROR){
-                printf("Failed to send data to client. Error: %d", WSAGetLastError());
-                closesocket(client_socket);
-                WSACleanup();
-                return 1;
+            printf("Recieved string: \"%.*s\" from the client.\n", iResult, recvbuf);
+         
+            //check if user wants to quit
+            if ((strncmp(recvbuf, cmdQuit, len) == 0) || (strncmp(recvbuf, cmdExit, len) == 0) ) {
+                printf("%s", recvbuf);
+                printf("Client requested connection closed.");
+                goto exit_success;
             }
-        }
-        else {
-            printf("Debug: recv returns: %d. INVESTIGATE THIS", iResult);
-            closesocket(client_socket);
-            WSACleanup();
-            return 1;
-        }
-    } 
-    while (iResult > 0);
+            //check if user asks for help    
+            else if (strncmp(recvbuf, cmdHelp, len) == 0){
+                iSendResult = send(client_socket, help_options, strlen(help_options), 0);
+                continue;
+            
+                if(iSendResult == SOCKET_ERROR){
+                    printf("Failed to send data to client. Error: %d", WSAGetLastError());
+                    goto cleanup;
+                }
+            }
 
+        }
+        //echo back to the client his string
+        iSendResult = send(client_socket, recvbuf, iResult, 0);
+        if(iSendResult == SOCKET_ERROR){
+            printf("Failed to send data to client. Error: %d", WSAGetLastError());
+            goto cleanup;
+        }
+    }    
+    while (iResult > 0);
+cleanup:
+    if (client_socket != INVALID_SOCKET) {
+        closesocket(client_socket);
+    }
+    if (server_socket != INVALID_SOCKET) {
+        closesocket(server_socket);
+    }
+    WSACleanup();
+    return EXIT_FAILURE;
+exit_success:
+    if (client_socket != INVALID_SOCKET) {
+        closesocket(client_socket);
+    }
+    if (server_socket != INVALID_SOCKET) {
+        closesocket(server_socket);
+    }
+    WSACleanup();
+    return EXIT_SUCCESS;
 }
+
+
 
