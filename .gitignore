@@ -2,3 +2,4 @@ server.exe
 *.o
 sizeof.c
 a.exe
+/a.out
